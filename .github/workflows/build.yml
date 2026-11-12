@@ -8,33 +8,28 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
-
     steps:
-      - name: Checkout repository
+      - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Extract project ZIP if needed
+      - name: Extract build.zip
         shell: bash
         run: |
           set -e
-          if [ -f "build.zip" ]; then
-            echo "Found build.zip, extracting project..."
-            unzip -o build.zip -d .
-          fi
-
-          echo "Checking Gradle project files..."
-          if [ ! -f "settings.gradle" ] && [ ! -f "settings.gradle.kts" ]; then
-            FOUND="$(find . -mindepth 2 -maxdepth 5 \( -name settings.gradle -o -name settings.gradle.kts \) -print -quit)"
-            if [ -n "$FOUND" ]; then
-              PROJECT_DIR="$(dirname "$FOUND")"
-              echo "Gradle project found in: $PROJECT_DIR"
-              echo "PROJECT_DIR=$PROJECT_DIR" >> "$GITHUB_ENV"
+          if [ -f build.zip ]; then
+            unzip -o build.zip -d extracted_project
+            if [ -f extracted_project/settings.gradle ]; then
+              echo "PROJECT_DIR=extracted_project" >> "$GITHUB_ENV"
             else
-              echo "ERROR: settings.gradle not found. Upload build.zip to repository root, or upload the extracted project files."
+              echo "ERROR: settings.gradle tidak ditemukan di dalam build.zip"
+              find extracted_project -maxdepth 4 -type f | head -80
               exit 1
             fi
-          else
+          elif [ -f settings.gradle ]; then
             echo "PROJECT_DIR=." >> "$GITHUB_ENV"
+          else
+            echo "ERROR: build.zip atau settings.gradle tidak ditemukan di root repository"
+            exit 1
           fi
 
       - name: Set up JDK 17
@@ -48,7 +43,7 @@ jobs:
         with:
           gradle-version: '8.7'
 
-      - name: Build Debug APK
+      - name: Build APK
         run: gradle -p "$PROJECT_DIR" assembleDebug
 
       - name: Upload APK
