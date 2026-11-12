@@ -1,40 +1,53 @@
 name: Build GALERY APK
-
 on:
   workflow_dispatch:
   push:
-    branches:
-      - main
-      - master
+    branches: [ main ]
 
 jobs:
   build:
     runs-on: ubuntu-latest
-
     steps:
-      - name: Checkout source
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-      - name: Set up JDK 17
-        uses: actions/setup-java@v4
-        with:
-          distribution: temurin
-          java-version: '17'
+      - name: Install Android APK tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y apktool zipalign apksigner python3-pil
 
-      - name: Set up Android SDK
-        uses: android-actions/setup-android@v3
+      - name: Decode APK and replace launcher artwork
+        run: |
+          apktool d -f input.apk -o decoded
+          mkdir -p decoded/res/mipmap-mdpi-v4 decoded/res/mipmap-hdpi-v4 decoded/res/mipmap-xhdpi-v4 decoded/res/mipmap-xxhdpi-v4 decoded/res/mipmap-xxxhdpi-v4
+          python3 - <<'PY'
+          from PIL import Image
+          import os
+          src=Image.open("GALERY_icon_transparent.png").convert("RGBA")
+          sizes={"mdpi":48,"hdpi":72,"xhdpi":96,"xxhdpi":144,"xxxhdpi":192}
+          for density,size in sizes.items():
+              folder=f"decoded/res/mipmap-{density}-v4"
+              os.makedirs(folder,exist_ok=True)
+              im=src.resize((size,size),Image.Resampling.LANCZOS)
+              for name in ("ic_launcher.png","ic_launcher_round.png","ic_launcher_foreground.png"):
+                  im.save(os.path.join(folder,name),optimize=True)
+          PY
+          # Make the adaptive icon background transparent as well.
+          find decoded/res -path '*/mipmap-anydpi-v26/ic_launcher.xml' -o -path '*/mipmap-anydpi-v26/ic_launcher_round.xml' | while read f; do
+            sed -i 's#@drawable/ic_launcher_background#@android:color/transparent#g' "$f"
+          done
 
-      - name: Set up Gradle 8.9
-        uses: gradle/actions/setup-gradle@v4
-        with:
-          gradle-version: '8.9'
-
-      - name: Build debug APK
-        run: gradle --no-daemon assembleDebug
+      - name: Rebuild APK
+        run: |
+          apktool b decoded -o unsigned.apk
+          zipalign -f 4 unsigned.apk aligned.apk
+          mkdir -p output
+          apksigner sign --ks "$ANDROID_HOME/debug.keystore" --ks-pass pass:android --key-pass pass:android --ks-key-alias androiddebugkey --out output/GALERY.apk aligned.apk || {
+            keytool -genkeypair -v -keystore debug.keystore -storepass android -alias androiddebugkey -keypass android -keyalg RSA -keysize 2048 -validity 10000 -dname "CN=Android Debug,O=Android,C=US"
+            apksigner sign --ks debug.keystore --ks-pass pass:android --key-pass pass:android --ks-key-alias androiddebugkey --out output/GALERY.apk aligned.apk
+          }
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: GALERY-debug
-          path: app/build/outputs/apk/debug/*.apk
-          if-no-files-found: error
+          name: GALERY-APK
+          path: output/GALERY.apk
